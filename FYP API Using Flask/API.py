@@ -14,8 +14,18 @@ with open("model_IQ.pkl", "rb") as file:
 with open("model_SJ.pkl", "rb") as file:
     model_SJ = pickle.load(file)
 
+# Define city configurations
+CITY_CONFIGS = {
+    'iquitos': {'model': model_IQ, 'threshold': 12},
+    'sanjuan': {'model': model_SJ, 'threshold': 20},
+    'lima': {'model': model_SJ, 'threshold': 20},
+    'cajamarca': {'model': model_SJ, 'threshold': 20},
+    'pucallpa': {'model': model_SJ, 'threshold': 20},
+    'tarapoto': {'model': model_SJ, 'threshold': 20}
+}
+
 app = Flask(__name__)
-CORS(app)  # This will enable CORS for all routes
+CORS(app)
 
 def process_weather_data(city):
     response = requests.get(f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{city}?unitGroup=metric&include=days&key=TYAMJ9DT4BBGRX76CPR4FQ7VA&contentType=csv")
@@ -56,11 +66,9 @@ def get_predictions(weather_df, model):
                         'station_avg_temp_c', 'station_max_temp_c' , 'station_min_temp_c' , 'station_precip_mm']]
     dmatrix = xgb.DMatrix(features)
 
-    # Real-time predictions
     real_time_predictions = model.predict(dmatrix)
     real_time_predictions = [int(round(x)) for x in real_time_predictions]
 
-    # Future predictions
     last_row = weather_df.iloc[-1][['year', 'weekofyear', 'reanalysis_dew_point_temp_k',
                                     'reanalysis_specific_humidity_g_per_kg', 'station_avg_temp_c',
                                     'station_max_temp_c', 'station_min_temp_c', 'station_precip_mm']]
@@ -70,64 +78,43 @@ def get_predictions(weather_df, model):
 
     return real_time_predictions, future_predictions
 
-@app.route('/predict_IQ', methods=['POST'])
-def predict_IQ():
-    weather_df, error = process_weather_data("iquitos")
+@app.route('/predict_city/<city>', methods=['POST'])
+def predict_city(city):
+    if city not in CITY_CONFIGS:
+        return jsonify({"error": f"City {city} not supported"}), 400
+    
+    weather_df, error = process_weather_data(city)
     if error:
         return jsonify(error), 500
     
-    real_time_predictions, future_predictions = get_predictions(weather_df, model_IQ)
+    real_time_predictions, future_predictions = get_predictions(weather_df, CITY_CONFIGS[city]['model'])
     
     predictions = {
-        "city": "iquitos",
+        "city": city,
         "real_time": real_time_predictions,
-        "future_horizon": future_predictions
+        "future_horizon": future_predictions,
+        "threshold": CITY_CONFIGS[city]['threshold']
     }
     
     return jsonify(predictions)
 
-@app.route('/predict_SJ', methods=['POST'])
-def predict_SJ():
-    weather_df, error = process_weather_data("sanjuan")
-    if error:
-        return jsonify(error), 500
+@app.route('/predict_all', methods=['POST'])
+def predict_all():
+    all_predictions = {}
     
-    real_time_predictions, future_predictions = get_predictions(weather_df, model_SJ)
-    
-    predictions = {
-        "city": "sanjuan",
-        "real_time": real_time_predictions,
-        "future_horizon": future_predictions
-    }
-    
-    return jsonify(predictions)
-
-@app.route('/predict_both', methods=['POST'])
-def predict_both():
-    # Process Iquitos data
-    iq_weather_df, error = process_weather_data("iquitos")
-    if error:
-        return jsonify(error), 500
-    
-    iq_real_time, iq_future = get_predictions(iq_weather_df, model_IQ)
-    
-    # Process San Juan data
-    sj_weather_df, error = process_weather_data("sanjuan")
-    if error:
-        return jsonify(error), 500
-    
-    sj_real_time, sj_future = get_predictions(sj_weather_df, model_SJ)
-    
-    all_predictions = {
-        "iquitos": {
-            "real_time": iq_real_time,
-            "future_horizon": iq_future
-        },
-        "sanjuan": {
-            "real_time": sj_real_time,
-            "future_horizon": sj_future
+    for city in CITY_CONFIGS:
+        weather_df, error = process_weather_data(city)
+        if error:
+            all_predictions[city] = {"error": error}
+            continue
+        
+        real_time_predictions, future_predictions = get_predictions(weather_df, CITY_CONFIGS[city]['model'])
+        
+        all_predictions[city] = {
+            "real_time": real_time_predictions,
+            "future_horizon": future_predictions,
+            "threshold": CITY_CONFIGS[city]['threshold']
         }
-    }
     
     return jsonify(all_predictions)
 
